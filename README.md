@@ -29,7 +29,7 @@ From the PyWebLib checkout:
 ```powershell
 .\sync-mirror.ps1              # mirror origin/main, i.e. what is deployed
 .\sync-mirror.ps1 -Ref HEAD    # mirror local commits instead
-.\sync-mirror.ps1 -WhatIf      # dry run
+.\sync-mirror.ps1 -WhatIf      # dry run, writes files but does not push
 ```
 
 Run it after every push to PyWebLib or the two sites drift.
@@ -48,3 +48,6 @@ Run it after every push to PyWebLib or the two sites drift.
 - **`localStorage` is per-origin.** A student's autosaved code does not follow
   them between the two hostnames. Anything saved to their account does, since
   both talk to the same Supabase project.
+- **DNS.** `pyweb.qmarkapp.com` needs a `CNAME` to `sebastianhagemeyer.github.io`
+  at NameSilo. It was deleted during the August 2026 domain move and had to be
+  re-added for this repo to serve anything.

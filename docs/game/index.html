@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Game library guide | PyWebLib</title>
+  <meta name="description" content="A hands-on guide to the PyWebLib game library: the game loop, the built-in sprite table, moving, collisions, the mouse, spinning and mirroring, scores, and every example runnable in the Playground." />
+  <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#4f46e5" />
+  <link rel="icon" type="image/svg+xml" href="../../favicon.svg?v=2" />
+  <link rel="apple-touch-icon" href="../../favicon.svg?v=2" />
+  <link rel="stylesheet" href="../../styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a href="../../" class="logo">
+        <img class="logo-mark" src="../../favicon.svg?v=2" alt="" width="32" height="32" />
+        <span>PyWebLib</span>
+      </a>
+      <nav class="site-nav" aria-label="Primary">
+        <a class="header-link" href="../../">Playground</a>
+        <a class="header-link" href="../../community/">Community</a>
+        <a class="header-link" href="../../leaderboard/">Leaderboard</a>
+        <a class="header-link" href="/about/">About</a>
+        <span id="pwl-account" class="pwl-account" data-root="../../"></span>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="page-hero">
+      <div class="container">
+        <p class="eyebrow">Docs &middot; Guide</p>
+        <h1>The game library</h1>
+        <p class="lead">Type <code>import game</code> in the <a href="../../">Playground</a> and make a game right in the browser: sprites, the keyboard, the mouse, collisions and a score, no install. This is the hands-on how-to; the one-line reference for every call is on the <a href="../#sec-game">Docs page</a>. Every example here has a <strong>Try it</strong> button that drops it into the Playground.</p>
+      </div>
+    </section>
+
+    <div class="container section">
+      <article class="guide">
+
+        <nav class="guide-jump" aria-label="On this page">
+          <a href="#shape">The shape of a game</a>
+          <a href="#sprites">Built-in sprites</a>
+          <a href="#move">Moving</a>
+          <a href="#collide">Collisions</a>
+          <a href="#mouse">The mouse</a>
+          <a href="#spin">Spin &amp; mirror</a>
+          <a href="#box">Boxes &amp; score</a>
+          <a href="#over">Ending a game</a>
+          <a href="#sound">Sound</a>
+          <a href="#limits">What it can do</a>
+        </nav>
+
+        <section id="shape">
+          <h2>The shape of every game</h2>
+          <p>Every game is the same three steps: <strong>open a window</strong>, <strong>make your sprites</strong>, then <strong>loop</strong>. Inside the loop you read the keys, change where things are, and call <code>game.frame()</code> to draw one picture and pause a heartbeat. That is what makes it move.</p>
+          <pre class="guide-code language-python" id="ex-first">import game
+
+# 1. Open the game window (width, height)
+game.window(480, 360)
+
+# 2. Make a sprite: a built-in skin, or any emoji
+chicken = game.sprite("chicken", 240, 300, size=52)
+
+# 3. The game loop: read keys, move, draw one frame, repeat
+while game.playing():
+    if game.pressed("left"):  chicken.x = chicken.x - 6
+    if game.pressed("right"): chicken.x = chicken.x + 6
+    if game.pressed("up"):    chicken.y = chicken.y - 6
+    if game.pressed("down"):  chicken.y = chicken.y + 6
+    game.frame()</pre>
+          <p><button type="button" class="btn btn-primary" data-load="ex-first">Try it in the Playground <svg class="btn-arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h9M8 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button></p>
+          <p class="callout"><strong>The golden rule of the loop:</strong> every game loop ends with <code>game.frame()</code>. Forget it and the loop spins invisibly forever without ever drawing. Press <strong>Stop</strong> (or <kbd>Ctrl</kbd>+<kbd>C</kbd> is not needed, just the Stop button) any time to end a game. Want it extra smooth? <code>game.frame(60)</code> runs at 60 frames a second (things move twice as fast then, so take smaller steps to keep the same speed).</p>
+          <p class="callout"><strong>Chrome or Edge.</strong> The trick that keeps the game moving without freezing the tab needs those browsers, the same as <code>input()</code> and <code>time.sleep()</code> here. In other browsers the window shows a friendly message instead.</p>
+        </section>
+
+        <section id="sprites">
+          <h2>The built-in sprites</h2>
+          <p>The library ships with a growing set of ready-made sprites in a matching style. Give <code>game.sprite</code> the <strong>number</strong> or the <strong>name</strong>, whichever you find easier, and any <strong>emoji</strong> works too.</p>
+          <div class="sprite-gallery" id="sprite-gallery"></div>
+          <pre class="guide-code language-python">hero = game.sprite("chicken", 100, 200)   # by name
+coin = game.sprite(4, 250, 100)           # or by number
+foe  = game.sprite("🦖", 300, 200)         # any emoji still works</pre>
+          <p>Swap what a sprite shows at any time with <code>.content</code>, a number, a name, or an emoji:</p>
+          <pre class="guide-code language-python">player = game.sprite("chicken", 240, 180)
+player.content = "coin"   # now a coin
+player.content = 6        # now a shocked face
+player.content = "🍗"     # now an emoji
+player.size = 80          # and bigger</pre>
+        </section>
+
+        <section id="move">
+          <h2>Moving things</h2>
+          <p>A sprite lives at <code>.x</code> and <code>.y</code>. Change those numbers and it moves. Read the keyboard with <code>game.pressed(key)</code>, which is <code>True</code> while a key is held: <code>"left"</code>, <code>"right"</code>, <code>"up"</code>, <code>"down"</code>, <code>"space"</code>, or any letter like <code>"a"</code>.</p>
+          <pre class="guide-code language-python">if game.pressed("left"):  player.x = player.x - 6
+if game.pressed("right"): player.x = player.x + 6</pre>
+        </section>
+
+        <section id="collide">
+          <h2>Collisions</h2>
+          <p><code>a.touches(b)</code> is <code>True</code> when two sprites overlap. That is how you catch, hit or dodge. Here is a catch game: steer the basket, catch the falling egg, count the score.</p>
+          <pre class="guide-code language-python" id="ex-catch">import game
+import random
+
+game.window(480, 360, background="#0b1020")
+basket = game.sprite("basket", 240, 330, size=52)
+egg = game.sprite("egg", random.randint(30, 450), 0, size=34)
+board = game.label("Score: 0", 60, 24, size=22)
+
+while game.playing():
+    if game.pressed("left"):  basket.x = basket.x - 8
+    if game.pressed("right"): basket.x = basket.x + 8
+    egg.y = egg.y + 5                      # the egg falls
+    if basket.touches(egg):                # caught it
+        game.score(1)
+        board.content = "Score: " + str(game.score())
+        egg.x = random.randint(30, 450)
+        egg.y = 0
+    elif egg.y > 360:                      # missed, drop a new one
+        egg.x = random.randint(30, 450)
+        egg.y = 0
+    game.frame()</pre>
+          <p><button type="button" class="btn btn-primary" data-load="ex-catch">Try it in the Playground <svg class="btn-arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h9M8 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button></p>
+          <p>The collision box turns with the sprite's <code>.angle</code> and stretches with its scale. Set your own with <code>sprite.hitbox = (width, height)</code> for a tighter fit, or turn on <code>game.debug(True)</code> right after <code>game.window(...)</code> to see every box outlined in red.</p>
+        </section>
+
+        <section id="mouse">
+          <h2>The mouse</h2>
+          <ul class="key-points">
+            <li><code>game.mouse_x()</code> <code>game.mouse_y()</code>: where the pointer is, in your sprites' coordinates. Make something follow it: <code>can.x = game.mouse_x()</code>.</li>
+            <li><code>game.clicked()</code>: <code>True</code> once per fresh click, then <code>False</code> until the next. One tap, one action, great for buttons.</li>
+            <li><code>sprite.at_mouse()</code>: <code>True</code> while the pointer is over that sprite. Pair with <code>game.clicked()</code> to click on things.</li>
+            <li><code>game.hide_cursor()</code>: hide the real pointer so a sprite can be the pointer (a watering can, a crosshair). <code>game.show_cursor()</code> brings it back.</li>
+          </ul>
+          <pre class="guide-code language-python">if plant.at_mouse() and game.clicked():
+    plant.size = plant.size + 10</pre>
+        </section>
+
+        <section id="spin">
+          <h2>Spin &amp; mirror</h2>
+          <p>Set <code>.angle</code> (in degrees) to turn a sprite, and add a little every frame to make it spin. Set <code>.scale_x = -1</code> to mirror it left-to-right so it faces the way it walks, the trick every side-scroller uses.</p>
+          <pre class="guide-code language-python" id="ex-spin">import game
+game.window(480, 360)
+
+coin = game.sprite("coin", 240, 180, size=80)
+
+while game.playing():
+    coin.angle = coin.angle + 6   # turn 6 degrees every frame
+    game.frame()</pre>
+          <p><button type="button" class="btn btn-primary" data-load="ex-spin">Try it in the Playground <svg class="btn-arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h9M8 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button></p>
+        </section>
+
+        <section id="box">
+          <h2>Boxes &amp; a scoreboard</h2>
+          <p>Prefer plain coloured shapes? <code>game.box(x, y, w, h, color)</code> is a rectangle and <code>game.circle(x, y, w, h, color)</code> is a round one (leave <code>h</code> out for a true circle, or give it to squash the circle into an oval). Both have a real <code>.color</code> you can change, and both move and collide just like a sprite. A scoreboard is just a <code>game.label</code> whose <code>.content</code> you update, so you decide where it sits and what it says.</p>
+          <pre class="guide-code language-python" id="ex-box">import game
+game.window(480, 360)
+
+player = game.box(240, 180, 40, 40, "#22cc88")
+wall   = game.box(380, 180, 20, 200, "#ff5577")
+board  = game.label("Bumps: 0", 70, 24, size=22)
+bumps  = 0
+
+while game.playing():
+    if game.pressed("right"): player.x = player.x + 5
+    if game.pressed("left"):  player.x = player.x - 5
+    if player.touches(wall):
+        player.color = "#ffdd00"          # flash on a bump
+        bumps = bumps + 1
+        board.content = "Bumps: " + str(bumps)
+    game.frame()</pre>
+          <p><button type="button" class="btn btn-primary" data-load="ex-box">Try it in the Playground <svg class="btn-arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h9M8 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button></p>
+        </section>
+
+        <section id="over">
+          <h2>Ending a game</h2>
+          <p><code>game.game_over(message)</code> shows a big banner and stops the loop:</p>
+          <pre class="guide-code language-python">if misses >= 3:
+    game.game_over("Game over! Score: " + str(game.score()))</pre>
+          <p class="callout"><strong>Leaderboards with <code>game.submit_score(points)</code>:</strong> call it whenever the score changes (or at game over) and, once you publish the game, its shared page gets a <strong>per-game leaderboard</strong>, the best score for each signed-in player who plays it there. In the Playground it quietly does nothing, so it is safe to leave in. This is separate from the site <a href="../../leaderboard/">Leaderboard</a>, which ranks <em>creators</em> by the upvotes on the programs they share.</p>
+          <pre class="guide-code language-python">game.submit_score(score)
+game.game_over("Score: " + str(score))</pre>
+        </section>
+
+        <section id="sound">
+          <h2>Sound</h2>
+          <p><code>game.sound(n)</code> plays a short built-in arcade sound, no files needed. Pick one by number:</p>
+          <ul class="key-points">
+            <li><strong>0</strong> beep &nbsp;&middot;&nbsp; <strong>1</strong> buzz &nbsp;&middot;&nbsp; <strong>2</strong> coin &nbsp;&middot;&nbsp; <strong>3</strong> powerup &nbsp;&middot;&nbsp; <strong>4</strong> jump</li>
+            <li><strong>5</strong> laser &nbsp;&middot;&nbsp; <strong>6</strong> hit &nbsp;&middot;&nbsp; <strong>7</strong> explosion &nbsp;&middot;&nbsp; <strong>8</strong> win &nbsp;&middot;&nbsp; <strong>9</strong> lose</li>
+          </ul>
+          <pre class="guide-code language-python">if basket.touches(egg):
+    game.score(1)
+    game.sound(2)      # coin
+
+if basket.touches(bomb):
+    game.sound(1)      # buzz
+    game.game_over("Boom!")</pre>
+          <p>The names work too, e.g. <code>game.sound("coin")</code>. Browsers only allow audio after a click, and a game is clicked to play, so it just works.</p>
+        </section>
+
+        <section id="saving">
+          <h2>Saving progress</h2>
+          <p>Games forget everything when they stop &mdash; unless you save. <code>game.save(key, value)</code> remembers a value in this browser, and <code>game.load(key, default)</code> reads it back next time. Perfect for a garden that keeps growing, coins that add up, or levels you've unlocked.</p>
+          <ul class="key-points">
+            <li><code>game.save("coins", 120)</code> &mdash; store a value under a name. It can be a number, text, <code>True</code>/<code>False</code>, or a list/dict of those.</li>
+            <li><code>game.load("coins", 0)</code> &mdash; read it back. The very first time (nothing saved yet) you get the default, so a new player starts fresh.</li>
+            <li><code>game.clear_save()</code> &mdash; wipe this game's save (a "New game" button). Pass a key to forget just one thing.</li>
+          </ul>
+          <pre class="guide-code language-python">import game
+game.window(480, 360)
+
+coins  = game.load("coins", 0)     # 0 the first ever run
+plants = game.load("plants", 0)
+
+# ...play: earn a coin, grow a plant...
+coins += 5
+plants += 1
+
+game.save("coins", coins)          # save when things change,
+game.save("plants", plants)        # not every frame
+# Run it again and the garden is exactly where you left it.</pre>
+          <p class="callout"><strong>It's per-game and per-browser.</strong> Each program keeps its own save, and it lives on this device only (it isn't synced across computers or accounts). Save when something actually changes rather than every frame.</p>
+        </section>
+
+        <section id="limits">
+          <h2>What it can and can't do</h2>
+          <ul class="key-points">
+            <li><strong>Great for:</strong> catch and dodge games, mazes, top-down movers, two-player keyboard games, simple arcade fun.</li>
+            <li><strong>Not built for:</strong> gravity and physics engines, loading your own image or sound files (the built-in <code>game.sound()</code> beeps aside). Those are what a full engine like pygame adds.</li>
+          </ul>
+          <p class="callout"><strong>Coordinates.</strong> The top-left corner is <code>(0, 0)</code>. <code>x</code> grows to the <em>right</em> and <code>y</code> grows <em>downward</em>, so a bigger <code>y</code> is further <em>down</em> the screen. That catches everyone out at first.</p>
+          <p>Now open the <a href="../../">Playground</a>, type <code>import game</code>, and build something. Load the "Game" example cards, change a number, and see what happens.</p>
+          <p><a href="../../" class="btn btn-primary">Open the Playground <svg class="btn-arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h9M8 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></a> <a href="../#sec-game" class="btn btn-ghost">Full call reference</a></p>
+        </section>
+
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>PyWebLib: real Python in your browser, powered by
+        <a href="https://pyodide.org" target="_blank" rel="noopener">Pyodide</a>. MIT licensed.</p>
+    </div>
+  </footer>
+
+  <!-- Carry a code example over to the Playground: stash it, then navigate. -->
+  <script>
+    (function () {
+      document.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-load]");
+        if (!btn) return;
+        var pre = document.getElementById(btn.getAttribute("data-load"));
+        if (!pre) return;
+        try {
+          localStorage.setItem("pyweblib-load", pre.textContent.replace(/\s+$/, ""));
+        } catch (err) { /* private mode: just navigate */ }
+        location.href = "../../";
+      });
+    })();
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
+  <script src="../../supabase-config.js"></script>
+  <script src="../../auth.js"></script>
+  <script src="../../sprites.js"></script>
+  <script>
+    (function () {
+      var g = document.getElementById("sprite-gallery");
+      var names = window.PWL_SPRITE_NAMES || [], svgs = window.PWL_SPRITES || [];
+      if (!g || !svgs.length) return;
+      for (var i = 0; i < svgs.length; i++) {
+        var cell = document.createElement("div"); cell.className = "sprite-cell";
+        var num = document.createElement("span"); num.className = "sprite-cell-num"; num.textContent = i;
+        var pic = document.createElement("div"); pic.className = "sprite-cell-pic"; pic.innerHTML = svgs[i];
+        var nm = document.createElement("code"); nm.className = "sprite-cell-name"; nm.textContent = '"' + (names[i] || i) + '"';
+        cell.appendChild(num); cell.appendChild(pic); cell.appendChild(nm);
+        g.appendChild(cell);
+      }
+    })();
+  </script>
+  <script>
+    // Highlight the guide's code blocks (Prism auto-highlight only catches
+    // <code> elements; these are bare <pre class="language-python">).
+    if (window.Prism) {
+      document.querySelectorAll("pre.guide-code").forEach(function (el) {
+        try { window.Prism.highlightElement(el); } catch (e) {}
+      });
+    }
+  </script>
+</body>
+</html>
