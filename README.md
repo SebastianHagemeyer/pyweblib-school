@@ -37,8 +37,15 @@ Run it after every push to PyWebLib or the two sites drift.
 ## Things that are deliberately different
 
 - **`CNAME`** holds `pyweb.qmarkapp.com`, not `play.pyweblib.org`.
-- **`robots.txt`** disallows everything. Two hostnames serving identical pages
-  is duplicate content, and only the canonical site should be indexed.
+- **Every page carries a `rel="canonical"`** pointing at its twin on
+  `play.pyweblib.org`, injected during sync. Two hostnames serving identical
+  pages is duplicate content; the canonical tag tells Google to index the real
+  site and credit it with this mirror's signals.
+- **`robots.txt` allows crawling, on purpose.** `Disallow: /` is the obvious
+  move and it is wrong here: it blocks crawling, not indexing. Anything already
+  indexed for this hostname would stay indexed, and a blocked crawler can never
+  fetch the page to see the canonical tag or a de-index signal. Blocking would
+  prevent the very cleanup it looks like it is doing.
 
 ## Gotchas
 
