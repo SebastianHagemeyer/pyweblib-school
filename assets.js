@@ -179,14 +179,78 @@
       return '<line x1="' + rnd(s.x1) + '" y1="' + rnd(s.y1) + '" x2="' + rnd(s.x2) + '" y2="' + rnd(s.y2) + '" stroke="' + s.fill + '" stroke-width="' + rnd(s.width || 4) + '" stroke-linecap="round"/>';
     if (s.type === "triangle")
       return '<polygon points="' + rnd(s.x + s.w / 2) + ',' + rnd(s.y) + ' ' + rnd(s.x) + ',' + rnd(s.y + s.h) + ' ' + rnd(s.x + s.w) + ',' + rnd(s.y + s.h) + '" fill="' + s.fill + '"/>';
-    if (s.type === "path")
-      return '<path d="' + s.points.map(function (pt, i) { return (i ? "L" : "M") + rnd(pt[0]) + " " + rnd(pt[1]); }).join(" ") + ' Z" fill="' + s.fill + '"/>';
+    if (s.type === "path") {
+      // Two kinds of path share one shape, so freehand inherits the bounding
+      // box, dragging, stretching and mirroring the polygon tool already has.
+      //   s.smooth  curves through the points (the Draw tool)
+      //   s.closed  false leaves it open and strokes it instead of filling
+      const open = s.closed === false;
+      const d = s.smooth ? curveThrough(s.points, !open) : s.points
+        .map(function (pt, i) { return (i ? "L" : "M") + rnd(pt[0]) + " " + rnd(pt[1]); }).join(" ");
+      const tail = open
+        ? '" fill="none" stroke="' + s.fill + '" stroke-width="' + rnd(s.width || 3) +
+          '" stroke-linecap="round" stroke-linejoin="round"/>'
+        : ' Z" fill="' + s.fill + '"/>';
+      return '<path d="' + d + tail;
+    }
     if (s.type === "raw")
       // A piece of an imported SVG kept verbatim (curves, strokes, clips and all),
       // positioned/stretched by a matrix wrapper so we never touch its geometry.
       return '<g transform="matrix(' + s.m.map(function (v) { return Math.round(v * 100000) / 100000; }).join(" ") + ')">' + s.markup + '</g>';
     return "";
   }
+  // ---- Freehand: raw pointer track -> a few points -> real curves ----------
+  // Thinning first, then curving. Ramer-Douglas-Peucker drops any point that
+  // already sits on the line between its neighbours, which is most of them: a
+  // pointer reports far more positions than a shape needs, and every one kept
+  // is jitter faithfully preserved and bytes in the published SVG.
+  function simplify(pts, tol) {
+    if (pts.length < 3) return pts.slice();
+    const keep = new Array(pts.length).fill(false);
+    keep[0] = keep[pts.length - 1] = true;
+    const stack = [[0, pts.length - 1]];
+    while (stack.length) {
+      const seg = stack.pop(), a = seg[0], b = seg[1];
+      const ax = pts[a][0], ay = pts[a][1];
+      const dx = pts[b][0] - ax, dy = pts[b][1] - ay;
+      const len = Math.hypot(dx, dy);
+      let worst = -1, worstD = tol;
+      for (let i = a + 1; i < b; i++) {
+        // Perpendicular distance to the chord, or to the endpoint if the chord
+        // has no length (a stroke that came back on itself).
+        const px = pts[i][0] - ax, py = pts[i][1] - ay;
+        const d = len ? Math.abs(px * dy - py * dx) / len : Math.hypot(px, py);
+        if (d > worstD) { worstD = d; worst = i; }
+      }
+      if (worst >= 0) { keep[worst] = true; stack.push([a, worst], [worst, b]); }
+    }
+    return pts.filter(function (_, i) { return keep[i]; });
+  }
+
+  // Catmull-Rom through the kept points, written out as the cubic Beziers SVG
+  // actually speaks. For a segment p1->p2 the control points are a sixth of the
+  // way along each neighbour's span, which is the standard uniform conversion
+  // and passes exactly through every point rather than near them.
+  function curveThrough(pts, closed) {
+    if (pts.length < 3) {
+      return pts.map(function (p, i) { return (i ? "L" : "M") + rnd(p[0]) + " " + rnd(p[1]); }).join(" ");
+    }
+    const n = pts.length;
+    const at = function (i) {
+      if (closed) return pts[(i + n) % n];
+      return pts[Math.max(0, Math.min(n - 1, i))];
+    };
+    let d = "M" + rnd(pts[0][0]) + " " + rnd(pts[0][1]);
+    const last = closed ? n : n - 1;
+    for (let i = 0; i < last; i++) {
+      const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+      d += " C" + rnd(p1[0] + (p2[0] - p0[0]) / 6) + " " + rnd(p1[1] + (p2[1] - p0[1]) / 6) +
+           " " + rnd(p2[0] - (p3[0] - p1[0]) / 6) + " " + rnd(p2[1] - (p3[1] - p1[1]) / 6) +
+           " " + rnd(p2[0]) + " " + rnd(p2[1]);
+    }
+    return d;
+  }
+
   function toSvg(list) {
     return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' + (list || shapes).map(shapeSvg).join("") + "</svg>";
   }
@@ -200,7 +264,12 @@
     if (s.type === "path") {
       const xs = s.points.map(function (p) { return p[0]; }), ys = s.points.map(function (p) { return p[1]; });
       const x = Math.min.apply(null, xs), y = Math.min.apply(null, ys);
-      return { x: x, y: y, w: Math.max.apply(null, xs) - x, h: Math.max.apply(null, ys) - y };
+      // An open path is STROKED, so half the pen hangs outside the points on
+      // every side. Without that the selection box cuts through the drawing.
+      const pad = s.closed === false ? (s.width || 3) / 2 : 0;
+      return { x: x - pad, y: y - pad,
+               w: Math.max.apply(null, xs) - x + pad * 2,
+               h: Math.max.apply(null, ys) - y + pad * 2 };
     }
     if (s.type === "raw") {
       // Axis-aligned bounds of the base box pushed through the piece's matrix.
@@ -320,6 +389,13 @@
                  '" fill="none" stroke="#d9861f" stroke-width="0.7" stroke-dasharray="1 1.2" vector-effect="non-scaling-stroke" pointer-events="none"/>';
         }
       }
+      if (freehand && freehand.pts.length > 1) {
+        // The raw track, in the real colour, so what you see under the pointer
+        // is what you are about to get. The curve fitting happens on release.
+        svg += '<polyline points="' + freehand.pts.map(function (p) { return rnd(p[0]) + "," + rnd(p[1]); }).join(" ") +
+               '" fill="none" stroke="' + color + '" stroke-width="' + rnd(lineWidth) +
+               '" stroke-linecap="round" stroke-linejoin="round" opacity="0.75"/>';
+      }
       if (pathPts.length) {   // the path being drawn: open line + dots
         svg += '<polyline points="' + pathPts.map(function (p) { return rnd(p[0]) + "," + rnd(p[1]); }).join(" ") +
                '" fill="none" stroke="#4f46e5" stroke-width="0.8" vector-effect="non-scaling-stroke"/>';
@@ -344,6 +420,7 @@
   }
 
   let drawing = null;   // { startX, startY, shape } while drawing
+  let freehand = null;  // { pts, clientX, clientY } while the Draw tool is down
   let dragging = null;  // { lastX, lastY } while moving a selection
   let resizing = null;  // { h, orig } while dragging a resize handle
   let panning = null;   // { sx, sy, vx, vy } while dragging the view around
@@ -365,6 +442,17 @@
       else { pathPts.push([clamp(p.x), clamp(p.y)]); render(); }
       return;
     }
+    if (tool === "draw") {
+      // Freehand. Collect the raw track now and turn it into a curve on
+      // release, so the drawing keeps up with the pointer.
+      // travel accumulates how far the pointer actually went, which is NOT the
+      // distance from start to finish: a closed shape ends where it began, so
+      // measuring displacement would score every loop as a click and bin it.
+      freehand = { pts: [[clamp(p.x), clamp(p.y)]], travel: 0,
+                   lastX: e.clientX, lastY: e.clientY };
+      try { stage.setPointerCapture(e.pointerId); } catch (err) {}
+      return;
+    }
     if (tool === "select") {
       const h = handleAt(p.x, p.y);   // grabbed a resize handle?
       if (h) { snapshot(); resizing = { h: h, orig: JSON.parse(JSON.stringify(shapes[selected])) }; return; }
@@ -384,19 +472,36 @@
       render();
       return;
     }
+    const histLen = history.length;
     snapshot();
     const s = { type: tool, fill: color };
     if (tool === "line") { s.x1 = p.x; s.y1 = p.y; s.x2 = p.x; s.y2 = p.y; s.width = lineWidth; }
     else if (tool === "circle") { s.cx = p.x; s.cy = p.y; s.r = 0; }
     else if (tool === "ellipse") { s.cx = p.x; s.cy = p.y; s.rx = 0; s.ry = 0; }
     else { s.x = p.x; s.y = p.y; s.w = 0; s.h = 0; }
-    drawing = { startX: p.x, startY: p.y, shape: s };
+    // Where the pointer went down ON SCREEN, plus the history mark, so pointerup
+    // can tell a click from a drag and undo itself cleanly if it was a click.
+    drawing = { startX: p.x, startY: p.y, shape: s, histLen: histLen,
+                clientX: e.clientX, clientY: e.clientY };
     shapes.push(s);
     setSel([shapes.length - 1]);
     render();
   });
 
   stage.addEventListener("pointermove", function (e) {
+    if (freehand) {
+      const p = toStage(e);
+      freehand.travel += Math.hypot(e.clientX - freehand.lastX, e.clientY - freehand.lastY);
+      freehand.lastX = e.clientX; freehand.lastY = e.clientY;
+      const last = freehand.pts[freehand.pts.length - 1];
+      // Drop points the pointer barely moved for: they add nothing to the
+      // shape and the thinning pass would only throw them away anyway.
+      if (Math.hypot(p.x - last[0], p.y - last[1]) >= 0.25) {
+        freehand.pts.push([clamp(p.x), clamp(p.y)]);
+        render();
+      }
+      return;
+    }
     if (panning) {
       // Move the view by the drag, in art units, so the art follows the pointer.
       const r = stage.getBoundingClientRect();
@@ -439,20 +544,54 @@
   });
 
   stage.addEventListener("pointerup", function (e) {
+    if (freehand) {
+      const raw = freehand.pts;
+      const moved = freehand.travel;
+      freehand = null;
+      // Same rule as every other tool: a click is not a drawing.
+      if (moved >= CLICK_PX && raw.length >= 3) {
+        // Finish where you started (within a few units) and it becomes a filled
+        // shape; leave it open and it stays a stroke of the current width.
+        const closed = Math.hypot(raw[raw.length - 1][0] - raw[0][0],
+                                  raw[raw.length - 1][1] - raw[0][1]) < 4;
+        const pts = simplify(raw, 0.35);
+        if (pts.length >= (closed ? 3 : 2)) {
+          snapshot();
+          shapes.push({ type: "path", points: pts, fill: color, smooth: true,
+                        closed: closed, width: lineWidth });
+          setSel([shapes.length - 1]);
+          pushRecent(color);
+        }
+      }
+      render();
+      try { stage.releasePointerCapture(e.pointerId); } catch (err) {}
+      return;
+    }
     if (drawing) {
       const s = drawing.shape;
-      // A plain CLICK (no real drag) drops a default-sized shape, so you can tap
-      // out a dot without measuring one. The bar for "that was a click" is
-      // deliberately low: at the old threshold a 4-unit drag was replaced by a
-      // 24-unit shape, a six-fold jump, so meaning to draw something small and
-      // twitching gave you a third of the canvas instead. Below the bar it is a
-      // click and you get the default; above it, you get exactly what you drew.
-      const tiny = (s.type === "line") ? (Math.abs(s.x2 - s.x1) + Math.abs(s.y2 - s.y1) < 1)
-        : (s.type === "circle") ? (s.r < 0.6)
-        : (s.type === "ellipse") ? (s.rx < 0.6 || s.ry < 0.6)
-        : (s.w < 1 || s.h < 1);
-      if (tiny) applyDefault(s);
-      pushRecent(s.fill);
+      // Drag draws. A click does NOT.
+      //
+      // This used to replace a too-small shape with a default-sized one, and the
+      // threshold was measured in art units. That could never work: the canvas is
+      // 64 units wide but is drawn hundreds of pixels wide, so one unit is many
+      // pixels, and a deliberate small drag came in under the bar and was blown
+      // up to a shape several times the size of the one you drew. Retuning the
+      // number just moved where it bit.
+      //
+      // The distance the POINTER moved is what separates a click from a drag, and
+      // that is a screen measurement, independent of zoom and canvas size. Under
+      // a few pixels is a click: throw the shape away and rewind the undo step it
+      // opened, so a stray click leaves no trace instead of dropping art on the
+      // canvas. Anything you actually drag, you keep at the size you drew it.
+      const moved = Math.hypot(e.clientX - drawing.clientX, e.clientY - drawing.clientY);
+      if (moved < CLICK_PX) {
+        const at = shapes.indexOf(s);
+        if (at >= 0) shapes.splice(at, 1);
+        history.length = drawing.histLen;   // it never happened
+        setSel([]);
+      } else {
+        pushRecent(s.fill);
+      }
       drawing = null;
       render();
     }
@@ -460,17 +599,10 @@
     try { stage.releasePointerCapture(e.pointerId); } catch (err) {}
   });
 
-  // The size a click (rather than a drag) gives you. Kept to roughly a sixth of
-  // the 64-unit canvas: big enough to see and grab, small enough that a stray
-  // click is a nudge rather than something that fills the artboard.
-  function applyDefault(s) {
-    if (s.type === "line") { s.x2 = clamp(s.x1 + 14); s.y2 = s.y1; }
-    else if (s.type === "circle") { s.r = 6; }
-    else if (s.type === "ellipse") { s.rx = 7; s.ry = 5; }
-    else if (s.type === "triangle") { s.x -= 6; s.y -= 5; s.w = 12; s.h = 11; }
-    else { s.x -= 6; s.y -= 4; s.w = 12; s.h = 8; s.rx = 1; }
-    s.x = clamp(s.x); s.y = clamp(s.y);
-  }
+  // How far the pointer may travel and still count as a click rather than a
+  // drag. Roughly a fingertip's wobble, and the same number a browser uses to
+  // decide a click survived a small movement.
+  const CLICK_PX = 4;
 
   function finishPath() {
     if (pathPts.length >= 3) {
@@ -942,7 +1074,7 @@
     if (e.key === "+" || e.key === "=") { e.preventDefault(); zoomBy(1.5); return; }
     if (e.key === "-" || e.key === "_") { e.preventDefault(); zoomBy(1 / 1.5); return; }
     if (e.key === "0") { e.preventDefault(); resetView(); return; }
-    const k = { v: "select", r: "rect", c: "circle", e: "ellipse", l: "line", t: "triangle", p: "path", i: "eyedrop", h: "pan" }[e.key.toLowerCase()];
+    const k = { v: "select", r: "rect", c: "circle", e: "ellipse", l: "line", t: "triangle", p: "path", d: "draw", i: "eyedrop", h: "pan" }[e.key.toLowerCase()];
     if (k) { const btn = document.querySelector('[data-tool="' + k + '"]'); if (btn) btn.click(); }
   });
 

@@ -1,4 +1,9 @@
 :root {
+  /* Tell the browser which way round we are. Without this the UA picks from
+     the OS preference, not from data-theme, so choosing Dark on a light
+     machine left native scrollbars, form controls and the canvas painted
+     light: a white scrollbar down the side of the dark code editor. */
+  color-scheme: light;
   /* PyWebLib palette: indigo chrome, amber accents, light surfaces. */
   --bg: #f7f8fb;
   --surface: #ffffff;
@@ -21,6 +26,46 @@
   --radius: 12px;
   --radius-sm: 8px;
 }
+
+/* ===== Dark theme =================================================== =====
+   data-theme is set by an inline script in <head> before this file paints, so
+   there is no flash. Only the shell flips: the code panels, console, game
+   canvas and card thumbnails are already dark in the light theme and stay
+   exactly as they are, which is why this is six tokens and not fifty.
+   ------------------------------------------------------------------------ */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0b1020;
+  --surface: #151b30;
+  --text: #e7eaf6;
+  --muted: #99a3c0;
+  --border: #28324e;
+  --success-bg: #12301f;
+  --danger-bg: #3a1c1c;
+  /* Shadows vanish on dark, so cards separate with a ring instead. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+/* The light surfaces that were written as literals rather than tokens. Each of
+   these is a pale panel that would stay white in dark mode. */
+[data-theme="dark"] .callout { background: #241f0f; border-color: #4a3d12; }
+/* Both of these darken the chip an inline <code> sits on. They have to set the
+   TEXT as well: the light-theme rule pairs a pale chip with near-black ink, and
+   flipping only the chip left dark ink on a dark chip, which is invisible. It
+   showed up worst in the sprite gallery, where the whole label is a <code>. */
+[data-theme="dark"] .callout code { background: #33290f; color: #f0e2c0; }
+[data-theme="dark"] .key-points li { background: #141a2c; }
+[data-theme="dark"] .guide :not(pre) > code { background: #1c2440; color: #dbe3ff; }
+[data-theme="dark"] .community-notice { background: #241f0f; border-color: #4a3d12; }
+[data-theme="dark"] .community-card.is-draft { background: #241d10; border-color: #4a3a17; }
+[data-theme="dark"] .pwl-cap-note { background: #2a2210; }
+[data-theme="dark"] .indent-hint { background: #241f0f; border-color: #4a3d12; }
+[data-theme="dark"] .lb-top-2 .lb-rank { color: #b9c2d4; }
+
+/* The asset studio's drawing surface deliberately stays light. A sprite drawn
+   with a dark outline on a dark stage looks wrong the moment it is used, and
+   changing what artists draw against is a product decision, not a token. */
 
 * { box-sizing: border-box; }
 
@@ -137,6 +182,31 @@ img { max-width: 100%; display: block; }
   border-bottom: 1px solid var(--border);
   padding: 48px 0 36px;
 }
+
+/* A hero that tucks itself away. On pages you come to in order to DO something
+   (browse the gallery, draw a sprite) the standing explanation costs most of
+   the first screen, and you only need it once. So it collapses to a small "?"
+   and drops down when asked. Built on <details>, which brings keyboard support
+   and the right screen-reader semantics without any script. */
+.page-hero-tuck { padding: 0; }
+.hero-tuck { padding: 11px 0; }
+.hero-tuck[open] { padding: 32px 0 30px; }
+.hero-tuck > summary {
+  display: block;                 /* kills the default disclosure triangle */
+  width: 32px; height: 32px; margin: 0 auto;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg); color: var(--muted);
+  font-size: 0.95rem; font-weight: 800; line-height: 30px; text-align: center;
+  cursor: pointer; user-select: none;
+  transition: color .12s, border-color .12s;
+}
+.hero-tuck > summary::-webkit-details-marker { display: none; }
+.hero-tuck > summary::marker { content: ""; }
+.hero-tuck > summary:hover, .hero-tuck > summary:focus-visible {
+  color: var(--primary); border-color: var(--primary);
+}
+.hero-tuck[open] > summary { margin-bottom: 16px; }
+.hero-tuck > .eyebrow { margin-top: 0; }
 .page-hero h1 {
   font-size: clamp(1.8rem, 3.5vw, 2.6rem);
   margin: 8px 0 12px;
@@ -191,6 +261,54 @@ img { max-width: 100%; display: block; }
   font-size: 0.85rem;
   opacity: 0.85;
 }
+/* ---------------------------------------------------------------------------
+   Editor line numbers (line-numbers.js)
+   ---------------------------------------------------------------------------
+   The gutter is a sibling laid over the editor's left edge, not a wrapper: the
+   editor is contenteditable, CodeJar owns the caret and Prism rehighlights it
+   in place, so it must not be moved in the DOM. The editor gains left padding
+   instead, and the numbers ride its scroll via a transform.
+
+   The metrics below MUST match .sandbox-code (font, size, line-height and the
+   vertical padding), or the numbers drift further from their lines the further
+   down you read.
+
+   The gutter is white-space: pre and the script feeds it blank rows opposite
+   wrapped lines. It must NOT wrap on its own: CodeJar puts pre-wrap on the
+   editor inline, so long lines there occupy several rows, and line-numbers.js
+   measures that and pads for it. */
+.has-gutter-host { position: relative; }
+.sandbox-gutter {
+  position: absolute;
+  /* top and height come from line-numbers.js, measured off the code element's
+     own box: this is positioned against .sandbox-editor, which also holds the
+     toolbar, so top:0 would sit the numbers on top of the filename. */
+  left: 0;
+  width: 44px;
+  padding: 14px 8px 14px 0;
+  box-sizing: border-box;
+  color: #7b84ad;
+  background: var(--code-bg);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;        /* clicks belong to the editor underneath */
+  overflow: hidden;
+  z-index: 1;
+}
+/* The numbers themselves. The outer box stays put and clips; this is what moves
+   with the editor's scroll, so the gutter can never ride up over the toolbar.
+   Its metrics are the ones that must match .sandbox-code. */
+.sandbox-gutter-inner {
+  text-align: right;
+  white-space: pre;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  will-change: transform;
+}
+.sandbox-code.has-linenums { padding-left: 56px; }
+
 .sandbox-code {
   display: block;
   flex: 1;
@@ -202,7 +320,10 @@ img { max-width: 100%; display: block; }
   line-height: 1.55;
   outline: none;
   overflow: auto;
-  white-space: pre;
+  /* No white-space here on purpose. CodeJar sets pre-wrap as an INLINE style on
+     this element, which beats anything written here, so a rule declaring "pre"
+     did nothing except read as though long lines never wrap. They do, and
+     line-numbers.js measures the wrapped rows to stay aligned with them. */
   tab-size: 4;
   -moz-tab-size: 4;
   caret-color: var(--accent);
@@ -339,10 +460,35 @@ img { max-width: 100%; display: block; }
   padding-top: 24px;
   border-top: 1.5px solid var(--border);
 }
+/* The whole snippet library is a drawer, shut by default. It is 47 snippets in
+   two collapsed groups, so open it was a wall of headings under the editor for
+   something you reach for occasionally rather than every visit. */
 .sandbox-examples-heading {
   margin: 0 0 4px;
   font-size: 1.15rem;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  user-select: none;
 }
+.sandbox-examples-heading::-webkit-details-marker { display: none; }
+.sandbox-examples-heading::marker { content: ""; }
+/* The twisty, drawn rather than borrowed from the default marker so it can turn. */
+.sandbox-examples-heading::before {
+  content: "";
+  width: 0; height: 0;
+  border-left: 7px solid currentColor;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  transition: transform .15s ease;
+  flex: none;
+}
+.sandbox-examples-drawer[open] > .sandbox-examples-heading { margin-bottom: 8px; }
+.sandbox-examples-drawer[open] > .sandbox-examples-heading::before { transform: rotate(90deg); }
+.sandbox-examples-heading:hover { color: var(--primary); }
 .sandbox-examples-sub {
   margin: 0 0 14px;
   color: var(--muted);
@@ -737,14 +883,51 @@ body.pwl-game-fs .game-fs-exit {
   text-decoration: none;
 }
 .docs-chip:hover { border-color: var(--primary); background: var(--bg); }
+
+/* Colour families (docs.js tags each section and chip with a data-fam).
+   Sections are grouped into five so the page can be scanned by colour without
+   turning into a paint chart. --sec is used for RULES AND BORDERS ONLY: put it
+   behind text and one of the two themes always ends up unreadable. */
+[data-fam]         { --sec: var(--primary); }
+[data-fam="core"]  { --sec: #4e8cff; }   /* the language itself */
+[data-fam="data"]  { --sec: #17a673; }   /* numbers, text, collections */
+[data-fam="lib"]   { --sec: #9061e8; }   /* standard libraries */
+[data-fam="draw"]  { --sec: #e05a9b; }   /* turtle and the game modules */
+[data-fam="error"] { --sec: #e0503f; }   /* when it goes wrong */
+[data-theme="dark"] [data-fam="core"]  { --sec: #6fa6ff; }
+[data-theme="dark"] [data-fam="data"]  { --sec: #2fd39a; }
+[data-theme="dark"] [data-fam="lib"]   { --sec: #b08cff; }
+[data-theme="dark"] [data-fam="draw"]  { --sec: #ff86bd; }
+[data-theme="dark"] [data-fam="error"] { --sec: #ff7d6d; }
+
+/* A wash behind the chip rather than colour ON the text: these accents sit
+   around 3:1 on white, fine for a border, not for 13px type. */
+.docs-chip[data-fam] {
+  border-color: color-mix(in srgb, var(--sec) 55%, transparent);
+  background: color-mix(in srgb, var(--sec) 12%, var(--surface));
+}
+.docs-chip[data-fam]:hover {
+  border-color: var(--sec);
+  background: color-mix(in srgb, var(--sec) 24%, var(--surface));
+}
+/* --primary is the same dark purple in both themes, so these chips were dark
+   ink on a dark surface long before the tint arrived (2.2:1). The dark accents
+   are bright, so in dark mode the text can carry the family colour itself. */
+[data-theme="dark"] .docs-chip[data-fam] { color: var(--sec); }
 .docs-section { margin: 0 0 30px; scroll-margin-top: 84px; }
 .docs-section[hidden] { display: none; }
-.docs-section-title { margin: 0 0 4px; color: var(--primary-dark); }
+.docs-section-title {
+  margin: 0 0 4px; color: var(--primary-dark);
+  border-left: 5px solid var(--sec); padding-left: 11px;
+}
+.docs-section-blurb { padding-left: 16px; }
 .docs-section-blurb { margin: 0 0 14px; color: var(--muted); }
 .docs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
 .docs-item {
   background: var(--surface);
   border: 1px solid var(--border);
+  /* After the shorthand, or it resets the colour straight back to grey. */
+  border-left: 3px solid var(--sec);
   border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
   padding: 12px 14px;
@@ -1145,12 +1328,27 @@ body.sandbox-maxed { overflow: hidden; }
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.86rem; line-height: 1.55; overflow-x: auto; white-space: pre;
 }
-.guide-code .token.keyword, .guide-code .token.class-name  { color: #c792ea; }
-.guide-code .token.string, .guide-code .token.attr-value   { color: #c3e88d; }
-.guide-code .token.number, .guide-code .token.boolean      { color: #f78c6c; }
-.guide-code .token.comment                                 { color: #8b92b0; font-style: italic; }
-.guide-code .token.operator, .guide-code .token.punctuation { color: #89ddff; }
-.guide-code .token.function, .guide-code .token.builtin    { color: #82aaff; }
+/* One Python palette for every snippet on the site: the guides, and the
+   signature and example on each reference card. Both sit on --code-bg, which is
+   dark in either theme, so these colours do not need a light variant. */
+.guide-code .token.keyword, .guide-code .token.class-name,
+.docs-ex .token.keyword, .docs-ex .token.class-name,
+.docs-sig .token.keyword, .docs-sig .token.class-name       { color: #c792ea; }
+.guide-code .token.string, .guide-code .token.attr-value,
+.docs-ex .token.string, .docs-ex .token.attr-value,
+.docs-sig .token.string, .docs-sig .token.attr-value        { color: #c3e88d; }
+.guide-code .token.number, .guide-code .token.boolean,
+.docs-ex .token.number, .docs-ex .token.boolean,
+.docs-sig .token.number, .docs-sig .token.boolean           { color: #f78c6c; }
+.guide-code .token.comment,
+.docs-ex .token.comment,
+.docs-sig .token.comment                    { color: #8b92b0; font-style: italic; }
+.guide-code .token.operator, .guide-code .token.punctuation,
+.docs-ex .token.operator, .docs-ex .token.punctuation,
+.docs-sig .token.operator, .docs-sig .token.punctuation     { color: #89ddff; }
+.guide-code .token.function, .guide-code .token.builtin,
+.docs-ex .token.function, .docs-ex .token.builtin,
+.docs-sig .token.function, .docs-sig .token.builtin         { color: #82aaff; }
 
 .callout {
   background: #fff7e8; border-left: 4px solid #ffbe0b;
@@ -1248,6 +1446,22 @@ body.sandbox-maxed { overflow: hidden; }
 .pwl-player-run { margin-left: auto; }
 .pwl-player-stage { display: flex; justify-content: center; background: #0b1020; border-radius: var(--radius-sm); padding: 10px; overflow: hidden; }
 .pwl-player-stage .turtle-stage, .pwl-player-stage .game-stage { margin: 0; max-width: 100%; }
+
+/* [hidden] has to actually hide. The player marks the unused stage hidden, but
+   .game-stage sets display:flex, and an author rule beats the UA sheet's
+   [hidden] { display: none }, so the "hidden" 480x360 game canvas was still
+   laid out. Every text-only program in the player therefore opened with a big
+   black rectangle above its output, and the output was squeezed underneath it.
+   .game-stage[hidden] is class+attribute, so it outranks the plain class. */
+.game-stage[hidden], .turtle-stage[hidden] { display: none; }
+
+/* A python program has no canvas at all, so it gets no plate either. */
+.pwl-player-is-python .pwl-player-stage { display: none; }
+
+/* ...and the console is then the whole program, so give it the room the canvas
+   would have taken. At 140px the Matrix Rain example showed about a fifth of
+   itself through a scrollbar. */
+.pwl-player-is-python .pwl-player-out { max-height: min(62vh, 460px); }
 /* The run output is a real terminal: keep the dark code background so the
    light text reads, instead of light-grey-on-white on the page/modal. */
 .pwl-player-out {
@@ -1445,3 +1659,41 @@ body.sandbox-maxed { overflow: hidden; }
 .asset-lib-count { margin-left: auto; font-size: 0.78rem; font-weight: 700; color: var(--muted); background: var(--bg); border-radius: 999px; padding: 1px 9px; }
 .asset-lib-group .asset-grid { padding: 0 16px 16px; }
 .asset-lib-group .cc-pager { margin: 0 16px 16px; }
+
+/* ===== Settings page ================================================ =====
+   Cards rather than a long form: two unrelated things (how it looks, who you
+   are) that should not read as one list. ------------------------------- */
+.set-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 22px 24px; margin: 0 0 18px;
+  box-shadow: var(--shadow-sm); max-width: 640px;
+}
+.set-card h2 { margin: 0 0 6px; font-size: 1.1rem; }
+.set-card p { margin: 0 0 14px; color: var(--muted); }
+.set-note { font-size: 0.88rem; }
+/* A second setting inside one card, so it needs a rule above it to separate the
+   two rather than reading as more of the first one. */
+.set-card h2.set-sub {
+  margin-top: 22px; padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.set-seg { display: inline-flex; gap: 4px; padding: 4px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 999px; flex-wrap: wrap; }
+.set-seg-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 15px; border: 0; border-radius: 999px; cursor: pointer;
+  background: transparent; color: var(--muted);
+  font: inherit; font-size: 0.9rem; font-weight: 600;
+  transition: background .15s, color .15s;
+}
+.set-seg-btn:hover { color: var(--text); }
+.set-seg-btn.is-on { background: var(--primary); color: #fff; }
+.set-seg-btn:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+
+.set-rows { margin: 0 0 16px; }
+.set-row { display: flex; gap: 16px; padding: 9px 0; border-top: 1px solid var(--border); }
+.set-row:first-child { border-top: 0; }
+.set-row dt { flex: 0 0 130px; color: var(--muted); font-size: 0.9rem; }
+.set-row dd { margin: 0; color: var(--text); font-weight: 600; word-break: break-word; }
+.set-actions { display: flex; gap: 10px; flex-wrap: wrap; }

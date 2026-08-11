@@ -146,6 +146,167 @@
         "    turtle.left(60)\n"
     },
     {
+      title: "Fractal tree",
+      cat: "Turtle",
+      desc: "A tree drawn by a function that calls itself. Twelve lines, and no two runs of the numbers give the same tree. The gentlest introduction to recursion there is.",
+      code:
+        "# A tree that draws itself.\n" +
+        "#\n" +
+        "# Look at branch(): near the bottom it calls branch(). A function that calls\n" +
+        "# itself is recursion, and it is how you draw something with no fixed number\n" +
+        "# of parts. Each branch is just a smaller tree growing off the last one.\n" +
+        "import turtle\n" +
+        "\n" +
+        'COLORS = ["#6b4a2f", "#7d5a37", "#3f8f5a", "#4bb06b", "#5be3c0", "#22d3a5"]\n' +
+        "\n" +
+        "turtle.speed(0)              # 0 means no drawing delay, so it appears at once\n" +
+        "turtle.hideturtle()\n" +
+        'turtle.bgcolor("#0b1020")\n' +
+        "turtle.penup()\n" +
+        "turtle.goto(0, -160)         # start near the bottom of the window\n" +
+        "turtle.left(90)              # and point straight up\n" +
+        "turtle.pendown()\n" +
+        "\n" +
+        "\n" +
+        "def branch(length, depth):\n" +
+        "    if depth == 0:           # out of levels: stop splitting\n" +
+        "        return\n" +
+        "    turtle.pensize(depth)\n" +
+        "    turtle.pencolor(COLORS[-depth])   # trunk gets COLORS[-6], twigs COLORS[-1]\n" +
+        "    turtle.forward(length)\n" +
+        "\n" +
+        "    turtle.left(24)\n" +
+        "    branch(length * 0.74, depth - 1)     # the whole left half of the tree\n" +
+        "    turtle.right(48)\n" +
+        "    branch(length * 0.74, depth - 1)     # then the whole right half\n" +
+        "    turtle.left(24)\n" +
+        "\n" +
+        "    turtle.penup()           # pen UP for the walk back, or the trip home\n" +
+        "    turtle.backward(length)  # redraws this branch in the last twig's colour\n" +
+        "    turtle.pendown()\n" +
+        "\n" +
+        "\n" +
+        "branch(95, 6)\n" +
+        'print("A tree from 12 lines. Change 0.74 or the 24 and run it again.")\n'
+    },
+    {
+      title: "Chaos Game",
+      cat: "Tech Demo",
+      desc: "A fractal you steer while it draws. Arrows change the shape, S saves a clean PNG of just the fractal. Built on game.plot(), which stamps marks that stay put instead of being redrawn every frame.",
+      code:
+        "# The chaos game, live. A fractal drawn by pure chance, that you can steer\n" +
+        "# while it draws.\n" +
+        "#\n" +
+        "# Pick a corner at random, hop part of the way toward it, leave a dot, repeat.\n" +
+        "# Nothing here draws a triangle. The triangle is what the randomness leaves.\n" +
+        "#\n" +
+        "# game.plot() is the trick: a dot stamped with plot() STAYS on the screen, so\n" +
+        "# the picture builds up. Sprites are the opposite, redrawn from scratch every\n" +
+        "# single frame, which is why a quarter of a million of them would be hopeless\n" +
+        "# and a quarter of a million dots of ink is free.\n" +
+        "import game, random, math\n" +
+        "\n" +
+        'game.window(560, 400, background="#0b1020")\n' +
+        "\n" +
+        "CX, CY, R = 280, 210, 160          # where the shape sits, and how big\n" +
+        "PER_FRAME = 400                    # dots added per frame\n" +
+        "LIMIT = 250000                     # stop here, or it eventually goes solid\n" +
+        "\n" +
+        'colors = ["#22d3a5", "#4ea8ff", "#ff5c8a", "#ffc857",\n' +
+        '          "#b48cff", "#5be3c0", "#ff8f4e", "#7ef0ff"]\n' +
+        "\n" +
+        "corners = 3\n" +
+        "hop = 0.5\n" +
+        "\n" +
+        'info = game.label("", CX, 22, size=15, color="#dbe4ff", background="#161c33")\n' +
+        'help1 = game.label("left/right: corners    up/down: hop    SPACE: pause    R: restart",\n' +
+        '                   CX, 366, size=12, color="#8fa0c8", background="#161c33")\n' +
+        'help2 = game.label("S: save a clean PNG    C: copy it    H: hide this text",\n' +
+        '                   CX, 386, size=12, color="#8fa0c8", background="#161c33")\n' +
+        "\n" +
+        '# game.pressed() is true for every frame a key is held down. For "one press,\n' +
+        '# one step" we have to notice the moment it CHANGES from up to down.\n' +
+        "held = {}\n" +
+        "\n" +
+        "\n" +
+        "def tapped(key):\n" +
+        "    down = game.pressed(key)\n" +
+        "    fresh = down and not held.get(key, False)\n" +
+        "    held[key] = down\n" +
+        "    return fresh\n" +
+        "\n" +
+        "\n" +
+        "def corner_points():\n" +
+        "    out = []\n" +
+        "    for i in range(corners):\n" +
+        "        a = -math.pi / 2 + i * 2 * math.pi / corners\n" +
+        "        out.append((CX + R * math.cos(a), CY + R * math.sin(a)))\n" +
+        "    return out\n" +
+        "\n" +
+        "\n" +
+        "points = corner_points()\n" +
+        "x, y = float(CX), float(CY)\n" +
+        "drawn = 0\n" +
+        "paused = False\n" +
+        "shown = True\n" +
+        "\n" +
+        "\n" +
+        "def restart():\n" +
+        "    # Changing the shape means the old dots no longer belong. wipe() clears the\n" +
+        "    # stamped layer and leaves the sprites (the text) alone.\n" +
+        "    global points, x, y, drawn\n" +
+        "    points = corner_points()\n" +
+        "    x, y = float(CX), float(CY)\n" +
+        "    drawn = 0\n" +
+        "    game.wipe()\n" +
+        "\n" +
+        "\n" +
+        "while game.playing():\n" +
+        '    if tapped("left") and corners > 3:\n' +
+        "        corners -= 1\n" +
+        "        restart()\n" +
+        '    if tapped("right") and corners < 8:\n' +
+        "        corners += 1\n" +
+        "        restart()\n" +
+        '    if game.pressed("up"):\n' +
+        "        hop = min(1.15, hop + 0.005)\n" +
+        "        restart()\n" +
+        '    if game.pressed("down"):\n' +
+        "        hop = max(0.05, hop - 0.005)\n" +
+        "        restart()\n" +
+        '    if tapped("space"):\n' +
+        "        paused = not paused\n" +
+        '    if tapped("r"):\n' +
+        "        restart()\n" +
+        '    if tapped("h"):\n' +
+        "        shown = not shown\n" +
+        "        for lab in (help1, help2, info):\n" +
+        "            lab.show() if shown else lab.hide()\n" +
+        '    if tapped("s"):\n' +
+        '        # "ink" saves JUST the stamped layer, with none of the text on top, so\n' +
+        "        # the fractal comes out clean without having to hide anything first.\n" +
+        '        game.save_image("ink")\n' +
+        '        print("Saved the fractal to your downloads.")\n' +
+        '    if tapped("c"):\n' +
+        '        game.copy_image("ink")\n' +
+        '        print("Copied the fractal to your clipboard.")\n' +
+        "\n" +
+        "    if not paused and drawn < LIMIT:\n" +
+        "        for _ in range(PER_FRAME):\n" +
+        "            c = random.randrange(corners)\n" +
+        "            px, py = points[c]\n" +
+        "            x += (px - x) * hop\n" +
+        "            y += (py - y) * hop\n" +
+        "            if not (-4000 < x < 4000 and -4000 < y < 4000):\n" +
+        "                x, y = float(CX), float(CY)   # a hop near 1 can fling it away\n" +
+        "            game.plot(x, y, colors[c % len(colors)], 1.6)\n" +
+        "        drawn += PER_FRAME\n" +
+        "\n" +
+        '    info.content = ("corners " + str(corners) + "     hop " + str(round(hop, 3)) +\n' +
+        '                    "     dots " + str(drawn) + (" (paused)" if paused else ""))\n' +
+        "    game.frame(60)\n"
+    },
+    {
       title: "Move the chicken",
       cat: "Basic Games",
       desc: "import game. Steer the chicken with the arrow keys.",
