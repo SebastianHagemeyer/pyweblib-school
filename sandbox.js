@@ -28,6 +28,127 @@
   // Click-to-load snippets. Each gets a card at the bottom of the page.
   const EXAMPLES = [
     {
+      title: "Play together",
+      desc: "Move a car and see everyone else in the room move too. Open a second tab to be player two.",
+      cat: "Multiplayer",
+      code:
+        "# Multiplayer: everyone running this sees everyone else move.\n" +
+        "# Open this page in a SECOND TAB to be your own second player.\n" +
+        "import game, net\n" +
+        "\n" +
+        "net.join(\"pyweblib-demo\")        # same room name = same game\n" +
+        "\n" +
+        "game.window(480, 360)\n" +
+        "me = game.sprite(\"car\", 240, 180, 44)\n" +
+        "info = game.label(\"\", 240, 24, 16)\n" +
+        "\n" +
+        "while game.playing():\n" +
+        "    if game.pressed(\"left\"):  me.x -= 5\n" +
+        "    if game.pressed(\"right\"): me.x += 5\n" +
+        "    if game.pressed(\"up\"):    me.y -= 5\n" +
+        "    if game.pressed(\"down\"):  me.y += 5\n" +
+        "    me.x = max(22, min(458, me.x))\n" +
+        "    me.y = max(22, min(338, me.y))\n" +
+        "\n" +
+        "    net.me(me)         # show my car to everybody else\n" +
+        "    net.others()       # ...and put their cars on my screen\n" +
+        "\n" +
+        "    if net.online():\n" +
+        "        info.content = \"Players here: \" + str(net.count())\n" +
+        "    else:\n" +
+        "        info.content = \"Connecting...\"\n" +
+        "    game.frame(30)\n"
+    },
+    {
+      title: "Bomb tag",
+      desc: "Drive into another player to pass them the bomb. Whoever holds it decides who gets it next.",
+      cat: "Multiplayer",
+      code:
+        "# Bomb tag. Drive into another player to pass them the bomb.\n" +
+        "# Open a SECOND TAB to play against yourself, or share the room name.\n" +
+        "import game, net, random\n" +
+        "\n" +
+        "net.join(\"bomb-tag\")\n" +
+        "\n" +
+        "game.window(480, 360)\n" +
+        "game.background(\"#101828\")\n" +
+        "me = game.sprite(\"car\", random.randint(60, 420), random.randint(60, 300), 44)\n" +
+        "info = game.label(\"\", 240, 24, 16)\n" +
+        "\n" +
+        "COOLDOWN = 30        # frames you must hold it for: 1 second at 30 fps\n" +
+        "KNOCKBACK = 46       # pixels the two of you are shoved apart on a tag\n" +
+        "\n" +
+        "def back_off(x, y):\n" +
+        "    # Push me away from a point. Without this the two cars are still touching\n" +
+        "    # the instant the bomb changes hands, so it would come straight back.\n" +
+        "    dx, dy = me.x - x, me.y - y\n" +
+        "    gap = (dx * dx + dy * dy) ** 0.5\n" +
+        "    if gap < 1:                  # dead centre on top of each other\n" +
+        "        dx, dy, gap = 1.0, 0.0, 1.0\n" +
+        "    me.x += dx / gap * KNOCKBACK\n" +
+        "    me.y += dy / gap * KNOCKBACK\n" +
+        "\n" +
+        "cooldown = 0\n" +
+        "had_bomb = False\n" +
+        "\n" +
+        "while game.playing():\n" +
+        "    if game.pressed(\"left\"):  me.x -= 5\n" +
+        "    if game.pressed(\"right\"): me.x += 5\n" +
+        "    if game.pressed(\"up\"):    me.y -= 5\n" +
+        "    if game.pressed(\"down\"):  me.y += 5\n" +
+        "\n" +
+        "    players = net.others()\n" +
+        "    holder = net.get(\"bomb\")\n" +
+        "\n" +
+        "    # Nobody has the bomb yet? The player with the smallest id takes it. Every\n" +
+        "    # browser works that out the same way, so no one has to be the referee.\n" +
+        "    if holder is None and net.online():\n" +
+        "        ids = [p.id for p in players] + [net.id]\n" +
+        "        if net.id == min(ids):\n" +
+        "            net.set(\"bomb\", net.id)\n" +
+        "\n" +
+        "    mine = (holder == net.id)\n" +
+        "\n" +
+        "    # Just been handed it? Jump back off whoever tagged me and start the\n" +
+        "    # cooldown, so it cannot bounce between two cars that are touching.\n" +
+        "    if mine and not had_bomb:\n" +
+        "        cooldown = COOLDOWN\n" +
+        "        for p in players:\n" +
+        "            if me.touches(p):\n" +
+        "                back_off(p.x, p.y)\n" +
+        "                break\n" +
+        "    had_bomb = mine\n" +
+        "    if cooldown > 0:\n" +
+        "        cooldown -= 1\n" +
+        "\n" +
+        "    want = \"💣\" if mine else \"car\"\n" +
+        "    if me.content != want:\n" +
+        "        me.content = want\n" +
+        "\n" +
+        "    # Only whoever HOLDS the bomb ever writes down who has it next, so two\n" +
+        "    # players can never disagree about where it is.\n" +
+        "    if mine and cooldown == 0:\n" +
+        "        for p in players:\n" +
+        "            if me.touches(p):\n" +
+        "                net.set(\"bomb\", p.id)\n" +
+        "                back_off(p.x, p.y)\n" +
+        "                break\n" +
+        "\n" +
+        "    me.x = max(22, min(458, me.x))\n" +
+        "    me.y = max(22, min(338, me.y))\n" +
+        "    net.me(me)\n" +
+        "\n" +
+        "    if not net.online():\n" +
+        "        info.content = \"Connecting...\"\n" +
+        "    elif mine and cooldown > 0:\n" +
+        "        info.content = \"You have the bomb! Hold it for \" + str(cooldown // 30 + 1) + \"...\"\n" +
+        "    elif mine:\n" +
+        "        info.content = \"You have the bomb! Run into someone.\"\n" +
+        "    else:\n" +
+        "        info.content = \"Players: \" + str(net.count()) + \" - keep away from the bomb!\"\n" +
+        "    game.frame(30)\n"
+    },
+    {
       title: "Say hello",
       desc: "Your very first program: print a few messages.",
       code:
@@ -1996,7 +2117,7 @@ while game.playing():
     // rather than a wall of cards you scroll past.
     { name: "Stock Python", open: false, subOpen: false, cats: ["Basic", "Intermediate"] },
     { name: "PyWebLib", open: true, subOpen: false,
-      cats: ["Turtle", "Basic Games", "Advanced Games", "3D", "Tech Demo", "Coloured Text"] }
+      cats: ["Turtle", "Basic Games", "Multiplayer", "Advanced Games", "3D", "Tech Demo", "Coloured Text"] }
   ];
 
   // Work out which category a snippet belongs in. An explicit ex.cat wins;
