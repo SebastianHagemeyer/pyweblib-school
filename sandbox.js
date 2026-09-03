@@ -72,7 +72,10 @@
         "\n" +
         "game.window(480, 360)\n" +
         "game.background(\"#101828\")\n" +
-        "me = game.sprite(\"car\", random.randint(60, 420), random.randint(60, 300), 44)\n" +
+        "CAR = 83             # the two Asset-studio sprites: a plain car...\n" +
+        "BOMB_CAR = 84        # ...and the same car carrying the bomb\n" +
+        "game.preload(CAR, BOMB_CAR)\n" +
+        "me = game.sprite(CAR, random.randint(60, 420), random.randint(60, 300), 44, asset=True)\n" +
         "info = game.label(\"\", 240, 24, 16)\n" +
         "\n" +
         "COOLDOWN = 30        # frames you must hold it for: 1 second at 30 fps\n" +
@@ -99,13 +102,17 @@
         "\n" +
         "    players = net.others()\n" +
         "    holder = net.get(\"bomb\")\n" +
+        "    here = [p.id for p in players] + [net.id]\n" +
         "\n" +
-        "    # Nobody has the bomb yet? The player with the smallest id takes it. Every\n" +
-        "    # browser works that out the same way, so no one has to be the referee.\n" +
-        "    if holder is None and net.online():\n" +
-        "        ids = [p.id for p in players] + [net.id]\n" +
-        "        if net.id == min(ids):\n" +
+        "    # Nobody has the bomb, OR whoever had it has left the room? The smallest id\n" +
+        "    # still here claims it. Every browser sees the same room and agrees, so no\n" +
+        "    # one has to be the referee. Without the \"left the room\" half, a holder who\n" +
+        "    # closes their tab leaves the bomb pointing at a player who is gone, and\n" +
+        "    # nobody can ever be it again.\n" +
+        "    if net.online() and holder not in here:\n" +
+        "        if net.id == min(here):\n" +
         "            net.set(\"bomb\", net.id)\n" +
+        "            holder = net.id\n" +
         "\n" +
         "    mine = (holder == net.id)\n" +
         "\n" +
@@ -121,9 +128,9 @@
         "    if cooldown > 0:\n" +
         "        cooldown -= 1\n" +
         "\n" +
-        "    want = \"💣\" if mine else \"car\"\n" +
-        "    if me.content != want:\n" +
-        "        me.content = want\n" +
+        "    want = BOMB_CAR if mine else CAR\n" +
+        "    if me.asset != want:\n" +
+        "        me.asset = want\n" +
         "\n" +
         "    # Only whoever HOLDS the bomb ever writes down who has it next, so two\n" +
         "    # players can never disagree about where it is.\n" +
@@ -1953,6 +1960,10 @@ while game.playing():
     defaultCode: DEFAULT_CODE,
     onChange: function (code) { updatePanels(code); },
     onRunStart: function () {
+      // A maximised editor covers the whole screen, hiding the output / game
+      // window it just ran. Drop back to the split view so you can watch it run
+      // straight away, instead of having to minimise the code by hand.
+      if (editorPanel && editorPanel.classList.contains("is-max")) setMaximised(false);
       // Give the game canvas focus so the arrow keys reach it immediately.
       if (usesGame(runner.getCode())) {
         const cv = document.getElementById("game-canvas");
