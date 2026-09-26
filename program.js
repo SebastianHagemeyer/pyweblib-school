@@ -20,6 +20,24 @@
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
   }
+  // Escape a comment body, then turn bare http(s) links into safe anchors.
+  // Only http/https are linked; href is escaped so it can't break out or run js.
+  function linkify(s) {
+    const str = String(s == null ? "" : s);
+    const re = /(https?:\/\/[^\s<>"']+)/g;
+    let out = "", last = 0, m;
+    while ((m = re.exec(str))) {
+      out += esc(str.slice(last, m.index));
+      let url = m[1], trail = "";
+      const t = url.match(/[.,!?;:)\]]+$/);
+      if (t) { trail = t[0]; url = url.slice(0, -trail.length); }
+      const safe = esc(url);
+      out += '<a href="' + safe + '" target="_blank" rel="noopener noreferrer nofollow">' + safe + "</a>" + esc(trail);
+      last = m.index + m[1].length;
+    }
+    out += esc(str.slice(last));
+    return out;
+  }
   function timeAgo(iso) {
     const then = new Date(iso).getTime();
     if (isNaN(then)) return "";
@@ -81,14 +99,19 @@
   }
 
   async function load() {
-    function cols(withViews) {
+    function cols(withViews, withFeat) {
       return "id,title,description,code,kind,scene,vote_count," + (withViews ? "view_count," : "") +
+        (withFeat ? "featured," : "") +
         "created_at,updated_at,author_id,profiles!author_id(display_name,avatar_url),comments(count)";
     }
-    // Ask for view_count, but tolerate a database that hasn't added it yet.
-    let res = await sb.from("projects").select(cols(true)).eq("id", id).single();
+    // Ask for view_count and featured, but tolerate a database that hasn't
+    // added either yet: the page still has to open.
+    let res = await sb.from("projects").select(cols(true, true)).eq("id", id).single();
+    if (res.error && /featured/i.test(res.error.message || "")) {
+      res = await sb.from("projects").select(cols(true, false)).eq("id", id).single();
+    }
     if (res.error && /view_count/i.test(res.error.message || "")) {
-      res = await sb.from("projects").select(cols(false)).eq("id", id).single();
+      res = await sb.from("projects").select(cols(false, false)).eq("id", id).single();
     }
     const { data, error } = res;
     if (error || !data) {
@@ -155,6 +178,7 @@
     view.innerHTML =
       '<div class="cc-head">' +
         '<span class="cc-kind cc-kind-' + esc(kind) + '">' + esc(kind) + "</span>" +
+        (p.featured === true ? '<span class="cc-kind cc-featured" title="Pinned to the top of the community gallery">★ Featured</span>' : "") +
         '<h1 class="pg-title"></h1>' +
       "</div>" +
       '<div class="cc-author">' + avatarOf(p.profiles) + "<span>" + nameOf(p.profiles) +
@@ -171,7 +195,7 @@
           '<span class="cc-votes">' + p.vote_count + "</span></button>" +
         '<button type="button" class="btn btn-ghost" id="pg-copy">Copy link</button>' +
       "</div>" +
-      '<details class="pg-code-wrap"' + (kind === "game" ? "" : " open") + '>' +
+      '<details class="pg-code-wrap">' +
         '<summary class="pg-code-summary">Code</summary>' +
         '<pre class="pwl-modal-code pg-code"></pre>' +
       "</details>" +
@@ -185,7 +209,7 @@
 
     view.querySelector(".pg-title").textContent = p.title || "Untitled";
     const desc = view.querySelector(".pg-desc");
-    if (p.description) desc.textContent = p.description; else desc.remove();
+    if (p.description) desc.innerHTML = linkify(p.description); else desc.remove();
     view.querySelector(".pg-code").textContent = p.code;
 
     // Poster with a Play overlay: click it to run inline, no Playground needed.
@@ -221,9 +245,58 @@
       } else { toast(url); }
     });
 
+    wireAdmin(p, view);
     wireVote(p);
     loadComments(p);
     countView(p);
+  }
+
+  // Admin moderation on the program page: rename / delete any post. The buttons
+  // are only CREATED once we've confirmed the signed-in user is an admin, so
+  // there's nothing for signed-out or ordinary users to see.
+  async function wireAdmin(p, view) {
+    const user = PWL.auth && PWL.auth.user();
+    if (!user) return;
+    let admin = false;
+    try { const r = await sb.rpc("is_admin"); admin = !!(r && r.data === true); } catch (e) { return; }
+    if (!admin) return;
+    const actions = view.querySelector(".pg-actions");
+    if (!actions) return;
+
+    const renameBtn = document.createElement("button");
+    renameBtn.type = "button"; renameBtn.className = "btn btn-ghost cc-mod"; renameBtn.textContent = "Rename";
+    renameBtn.addEventListener("click", async function () {
+      const next = window.prompt("Rename this post:", p.title || "");
+      if (next == null) return;
+      const title = next.trim().slice(0, 120);
+      if (!title || title === p.title) return;
+      const res = await sb.from("projects")
+        .update({ title: title, updated_at: new Date().toISOString() })
+        .eq("id", p.id).select("id").single();
+      if (res.error) { toast("Rename failed: " + res.error.message); return; }
+      p.title = title;
+      const el = view.querySelector(".pg-title"); if (el) el.textContent = title;
+      toast("Renamed.");
+    });
+    actions.appendChild(renameBtn);
+
+    const delBtn = document.createElement("button");
+    delBtn.type = "button"; delBtn.className = "btn btn-ghost cc-mod cc-mod-del"; delBtn.textContent = "Delete";
+    let armed = false, armTimer;
+    delBtn.addEventListener("click", async function () {
+      if (!armed) {
+        armed = true; delBtn.textContent = "Click again to delete"; delBtn.classList.add("armed");
+        clearTimeout(armTimer);
+        armTimer = setTimeout(function () { armed = false; delBtn.textContent = "Delete"; delBtn.classList.remove("armed"); }, 3500);
+        return;
+      }
+      clearTimeout(armTimer);
+      const res = await sb.from("projects").delete().eq("id", p.id);
+      if (res.error) { toast("Delete failed: " + res.error.message); return; }
+      toast("Post deleted.");
+      setTimeout(function () { window.location.href = "../community/"; }, 700);
+    });
+    actions.appendChild(delBtn);
   }
 
   async function wireVote(p) {
@@ -280,7 +353,7 @@
           ' <span class="pwl-comment-when">' + esc(timeAgo(c.created_at)) + "</span></span>" +
           '<span class="pwl-comment-text"></span></div>' +
           (user && c.user_id === user.id ? '<button type="button" class="pwl-comment-del" title="Delete">&times;</button>' : "");
-        row.querySelector(".pwl-comment-text").textContent = c.body;
+        row.querySelector(".pwl-comment-text").innerHTML = linkify(c.body);
         const del = row.querySelector(".pwl-comment-del");
         if (del) del.addEventListener("click", async function () {
           await sb.from("comments").delete().eq("id", c.id);

@@ -34,12 +34,37 @@
   let projects = [];
   let votedSet = new Set();
   let currentUserId = null;
+  let isAdmin = false;       // moderator: can rename/delete any post (checked once)
+  let adminChecked = false;
   let pubSupported = true;   // set false once we learn the DB has no `published` column
+  let featSupported = true;  // ditto for `featured` (pinned posts)
+  let pinned = [];           // the pins that exist
+  let featured = [];         // the pins actually being shown (page one only)
+  // A pin is only an advert while it is rare, and this must stay BELOW
+  // PAGE_SIZE so page one always has room for ordinary programs too.
+  const FEATURED_MAX = 3;
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
+  }
+  // Escape a comment body, then turn bare http(s) links into safe anchors.
+  function linkify(s) {
+    const str = String(s == null ? "" : s);
+    const re = /(https?:\/\/[^\s<>"']+)/g;
+    let out = "", last = 0, m;
+    while ((m = re.exec(str))) {
+      out += esc(str.slice(last, m.index));
+      let url = m[1], trail = "";
+      const t = url.match(/[.,!?;:)\]]+$/);
+      if (t) { trail = t[0]; url = url.slice(0, -trail.length); }
+      const safe = esc(url);
+      out += '<a href="' + safe + '" target="_blank" rel="noopener noreferrer nofollow">' + safe + "</a>" + esc(trail);
+      last = m.index + m[1].length;
+    }
+    out += esc(str.slice(last));
+    return out;
   }
   function timeAgo(iso) {
     const then = new Date(iso).getTime();
@@ -95,21 +120,56 @@
   }
   function nameOf(profile) { return esc((profile && profile.display_name) || "Someone"); }
 
+  // Pins sit on page one and count toward its six, so page one holds fewer
+  // ordinary programs and every later page starts that much earlier. Without
+  // the shift, page one showed seven cards and page two repeated one of them.
+  function firstPageRoom() {
+    return Math.max(1, PAGE_SIZE - Math.min(pinned.length, PAGE_SIZE - 1));
+  }
+  function pageCount() {
+    const rest = Math.max(0, totalCount - firstPageRoom());
+    return Math.max(1, 1 + Math.ceil(rest / PAGE_SIZE));
+  }
+
+  // The row shape both the paged list and the pinned strip ask for. The two
+  // optional columns are there so a database that has not had the migrations
+  // run still loads the gallery instead of erroring out.
+  function cols(withViews, withPub, withFeat) {
+    return "id,title,description,code,kind,scene,vote_count," +
+      (withPub ? "published," : "") + (withViews ? "view_count," : "") +
+      (withFeat ? "featured,featured_at," : "") +
+      "created_at,updated_at,author_id,profiles!author_id(display_name,avatar_url),comments(count)";
+  }
+
   async function refresh() {
     grid.hidden = false;
     grid.innerHTML = '<p class="community-empty">Loading…</p>';
     const user = PWL.auth && PWL.auth.user();
     currentUserId = user ? user.id : null;
-
-    function cols(withViews, withPub) {
-      return "id,title,description,code,kind,scene,vote_count," +
-        (withPub ? "published," : "") + (withViews ? "view_count," : "") +
-        "created_at,updated_at,author_id,profiles!author_id(display_name,avatar_url),comments(count)";
+    // Learn (once) whether this user may moderate. is_admin() is security-definer
+    // so the page never reads the admins table directly.
+    if (user && !adminChecked) {
+      adminChecked = true;
+      try { const r = await sb.rpc("is_admin"); isAdmin = !!(r && r.data === true); } catch (e) { isAdmin = false; }
     }
+
+    // The pins are fetched FIRST, because how many there are decides how much
+    // room page one has left. They are only RENDERED on page one: repeating
+    // the same card down every page of the gallery is what made it feel
+    // parasitic rather than promoted.
+    pinned = await loadFeatured();
+    featured = page === 0 ? pinned : [];
+
     function build(withViews, withPub) {
-      let q = sb.from("projects").select(cols(withViews, withPub), { count: "exact" });
-      if (mineOnly && user) q = q.eq("author_id", user.id);      // your own, drafts included
-      else if (withPub) q = q.eq("published", true);             // public feed: published only
+      let q = sb.from("projects").select(cols(withViews, withPub, featSupported), { count: "exact" });
+      if (mineOnly && user) {
+        q = q.eq("author_id", user.id);                          // your own, drafts included
+      } else {
+        if (withPub) q = q.eq("published", true);                // public feed: published only
+        // Pinned posts have their own strip at the top of every tab, so keep
+        // them out of the paged list rather than printing the same card twice.
+        if (featSupported) q = q.eq("featured", false);
+      }
       if (sort === "new") {
         q = q.order("created_at", { ascending: false });
       } else {
@@ -121,12 +181,15 @@
         if (withViews) q = q.order("view_count", { ascending: false });
         q = q.order("created_at", { ascending: false });
       }
-      const from = page * PAGE_SIZE;
-      return q.range(from, from + PAGE_SIZE - 1);
+      const room = firstPageRoom();
+      const from = page === 0 ? 0 : room + (page - 1) * PAGE_SIZE;
+      const take = page === 0 ? room : PAGE_SIZE;
+      return q.range(from, from + take - 1);
     }
     // Ask for view_count and published, but tolerate a database that hasn't added
     // them yet (schema not re-run): fall back so the gallery still loads.
     let res = await build(true, pubSupported);
+    if (res.error && /featured/i.test(res.error.message || "")) { featSupported = false; res = await build(true, pubSupported); }
     if (res.error && /published/i.test(res.error.message || "")) { pubSupported = false; res = await build(true, false); }
     if (res.error && /view_count/i.test(res.error.message || "")) res = await build(false, pubSupported);
     const { data, error, count } = res;
@@ -137,12 +200,12 @@
     }
     totalCount = (typeof count === "number") ? count : (data ? data.length : 0);
     // Paged past the end (e.g. after a delete)? Step back to the last page and refetch.
-    const lastPage = Math.max(0, Math.ceil(totalCount / PAGE_SIZE) - 1);
+    const lastPage = pageCount() - 1;
     if (page > lastPage) { page = lastPage; return refresh(); }
     projects = data || [];
 
     votedSet = new Set();
-    if (user && projects.length) {
+    if (user && (projects.length || featured.length)) {
       const res = await sb.from("votes").select("project_id").eq("user_id", user.id);
       votedSet = new Set((res.data || []).map(function (r) { return r.project_id; }));
     }
@@ -150,14 +213,38 @@
     renderPager();
   }
 
+  // The pinned posts, fetched on their own rather than ordered to the front of
+  // the list above. Trending's seven-day window and Top's vote ordering would
+  // each drop or bury a pin, and a pin has to lead all three tabs the same way.
+  // Fetched on every page even though only page one shows them, because the
+  // count is what the paging is shifted by.
+  async function loadFeatured() {
+    if (mineOnly || !featSupported) return [];
+    function run(withViews) {
+      let q = sb.from("projects").select(cols(withViews, pubSupported, true)).eq("featured", true);
+      if (pubSupported) q = q.eq("published", true);
+      return q.order("featured_at", { ascending: false }).limit(FEATURED_MAX);
+    }
+    let r = await run(true);
+    if (r.error && /published/i.test(r.error.message || "")) { pubSupported = false; r = await run(true); }
+    if (r.error && /view_count/i.test(r.error.message || "")) r = await run(false);
+    if (r.error) {
+      // No `featured` column yet (migration not run): stop asking for it.
+      if (/featured/i.test(r.error.message || "")) featSupported = false;
+      return [];
+    }
+    return r.data || [];
+  }
+
   function renderPager() {
     if (!pager) return;
-    const pages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+    const pages = pageCount();
     if (pages <= 1) { pager.hidden = true; pager.innerHTML = ""; return; }
     pager.hidden = false;
     pager.innerHTML =
       '<button type="button" class="cc-page-btn" data-page="prev"' + (page <= 0 ? " disabled" : "") + ">‹ Prev</button>" +
-      '<span class="cc-page-info">Page ' + (page + 1) + " of " + pages + "  ·  " + totalCount + " project" + (totalCount === 1 ? "" : "s") + "</span>" +
+      '<span class="cc-page-info">Page ' + (page + 1) + " of " + pages + "  ·  " + totalCount + " project" + (totalCount === 1 ? "" : "s") +
+        (pinned.length ? " + " + pinned.length + " featured" : "") + "</span>" +
       '<button type="button" class="cc-page-btn" data-page="next"' + (page >= pages - 1 ? " disabled" : "") + ">Next ›</button>";
     function go(delta) {
       page = Math.min(pages - 1, Math.max(0, page + delta));
@@ -169,88 +256,121 @@
   }
 
   function renderGrid() {
-    if (!projects.length) {
-      grid.innerHTML = '<p class="community-empty">' +
-        (mineOnly
-          ? "You haven't shared anything yet. Open the Playground and hit Share."
-          : sort === "trending"
-            ? "Nothing shared in the last " + TRENDING_DAYS + " days. Try Top for the all-time favourites."
-            : "No programs yet. Be the first, open the Playground and hit Share!") +
-        "</p>";
-      return;
-    }
     grid.innerHTML = "";
-    projects.forEach(function (p) {
-      const commentCount = (p.comments && p.comments[0] && p.comments[0].count) || 0;
-      const voted = votedSet.has(p.id);
-      const mine = currentUserId && p.author_id === currentUserId;
-      const isDraft = p.published === false;   // false only when the column exists
-      const card = document.createElement("article");
-      card.className = "community-card" + (isDraft ? " is-draft" : "");
-      card._p = p;
-      card.innerHTML =
-        '<a class="cc-thumb-wrap" href="../game/?id=' + encodeURIComponent(p.id) + '"><canvas class="cc-thumb" width="320" height="180"></canvas></a>' +
-        '<div class="cc-head">' +
-          '<span class="cc-kind cc-kind-' + esc(p.kind) + '">' + esc(p.kind) + "</span>" +
-          (isDraft ? '<span class="cc-kind cc-draft" title="Only you can see this">Draft</span>' : "") +
-          '<h3 class="cc-title"></h3>' +
-          '<button type="button" class="cc-play" data-act="play" title="' + (p.kind === "game" ? "Play" : p.kind === "game3d" ? "Open in the Playground" : "Run") + '">' +
-            '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3l9 5-9 5z" fill="currentColor"/></svg> ' +
-            (p.kind === "game" ? "Play" : p.kind === "game3d" ? "Open" : "Run") +
-          "</button>" +
-        "</div>" +
-        '<p class="cc-desc"></p>' +
-        '<div class="cc-author">' + avatarOf(p.profiles) + "<span>" + nameOf(p.profiles) +
-          ' &middot; ' + esc(whenLabel(p)) + "</span>" + viewsHtml(p.view_count) + "</div>" +
-        '<div class="cc-actions">' +
-          '<button type="button" class="cc-vote' + (voted ? " voted" : "") + '" data-act="vote" title="Upvote">' +
-            '<span class="cc-arrow"><svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path d="M8 4l5 6.5H3z" fill="currentColor"/></svg></span> <span class="cc-votes">' + p.vote_count + "</span></button>" +
-          '<button type="button" class="cc-btn" data-act="open">Open in Playground</button>' +
-          '<button type="button" class="cc-btn cc-comment-btn" data-act="detail"><svg class="cc-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M3 2h10a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H7l-3 3v-3a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="currentColor"/></svg> ' + commentCount + "</button>" +
-          (mine && isDraft ? '<button type="button" class="cc-btn cc-publish" data-act="publish">Publish</button>' : "") +
-          (mine ? '<button type="button" class="cc-btn cc-edit" data-act="edit">Edit</button>' : "") +
-        "</div>";
-      card.querySelector(".cc-title").textContent = p.title;
-      const desc = card.querySelector(".cc-desc");
-      if (p.description) desc.textContent = p.description; else desc.remove();
-      card.querySelector('[data-act="vote"]').addEventListener("click", function () { toggleVote(p, card); });
-      card.querySelector('[data-act="play"]').addEventListener("click", function () {
-        // Games deserve the full page: leaderboard, comments, big stage. Turtle
-        // and plain-Python programs run inline in a quick popup.
-        if (p.kind === "game") { window.location.href = "../game/?id=" + encodeURIComponent(p.id); return; }
-        // 3D needs the Playground's WebGL stage: neither the popup player nor the
-        // game page has one, so they would just show an empty box.
-        if (p.kind === "game3d") { openInPlayground(p); return; }
-        countView(p, card);
-        if (window.PWL.player) window.PWL.player.openModal({ code: p.code, kind: p.kind, title: p.title });
-      });
-      // The thumbnail is a link to the game page, which has no 3D stage either.
-      if (p.kind === "game3d") {
-        const thumbLink = card.querySelector(".cc-thumb-wrap");
-        if (thumbLink) thumbLink.addEventListener("click", function (e) { e.preventDefault(); openInPlayground(p); });
-      }
-      card.querySelector('[data-act="open"]').addEventListener("click", function () { openInPlayground(p); });
-      card.querySelector('[data-act="detail"]').addEventListener("click", function () { openDetail(p); });
-      if (mine) card.querySelector('[data-act="edit"]').addEventListener("click", function () { openEditor(p); });
-      if (mine && isDraft) {
-        // Two-click, like delete: publishing is public and one-way, so a single
-        // stray click shouldn't do it.
-        const pubBtn = card.querySelector('[data-act="publish"]');
-        let armed = false, armTimer;
-        pubBtn.addEventListener("click", function () {
-          if (!armed) {
-            armed = true; pubBtn.textContent = "Click again to publish"; pubBtn.classList.add("armed");
-            clearTimeout(armTimer);
-            armTimer = setTimeout(function () { armed = false; pubBtn.textContent = "Publish"; pubBtn.classList.remove("armed"); }, 3500);
-            return;
-          }
-          clearTimeout(armTimer);
-          publishDraft(p);
-        });
-      }
-      if (window.PWL.preview) { try { window.PWL.preview.renderInto(card.querySelector(".cc-thumb"), p.code, p.scene); } catch (e) {} }
-      grid.appendChild(card);
+    // Pinned first, then the tab's own list. The note below is appended rather
+    // than replacing the grid, so an empty week still shows what is featured.
+    featured.forEach(function (p) { grid.appendChild(buildCard(p)); });
+    projects.forEach(function (p) { grid.appendChild(buildCard(p)); });
+    if (!projects.length) {
+      const note = document.createElement("p");
+      note.className = "community-empty";
+      note.textContent = mineOnly
+        ? "You haven't shared anything yet. Open the Playground and hit Share."
+        : sort === "trending"
+          ? "Nothing new shared in the last " + TRENDING_DAYS + " days. Try Top for the all-time favourites."
+          : "No programs yet. Be the first, open the Playground and hit Share!";
+      grid.appendChild(note);
+    }
+  }
+
+  function buildCard(p) {
+    const commentCount = (p.comments && p.comments[0] && p.comments[0].count) || 0;
+    const voted = votedSet.has(p.id);
+    const mine = currentUserId && p.author_id === currentUserId;
+    const isDraft = p.published === false;   // false only when the column exists
+    const isFeatured = p.featured === true;   // true only when the column exists
+    const card = document.createElement("article");
+    card.className = "community-card" + (isDraft ? " is-draft" : "") + (isFeatured ? " is-featured" : "");
+    card._p = p;
+    card.innerHTML =
+      '<a class="cc-thumb-wrap" href="../game/?id=' + encodeURIComponent(p.id) + '">' +
+        '<canvas class="cc-thumb" width="320" height="180"></canvas>' +
+        (isFeatured ? '<span class="cc-kind cc-featured" title="Pinned by a moderator: it leads Trending, New and Top">★ Featured</span>' : "") +
+      "</a>" +
+      '<div class="cc-head">' +
+        '<span class="cc-kind cc-kind-' + esc(p.kind) + '">' + esc(p.kind) + "</span>" +
+        (isDraft ? '<span class="cc-kind cc-draft" title="Only you can see this">Draft</span>' : "") +
+        '<h3 class="cc-title"></h3>' +
+        '<button type="button" class="cc-play" data-act="play" title="' + (p.kind === "game" ? "Play" : p.kind === "game3d" ? "Open in the Playground" : "Run") + '">' +
+          '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3l9 5-9 5z" fill="currentColor"/></svg> ' +
+          (p.kind === "game" ? "Play" : p.kind === "game3d" ? "Open" : "Run") +
+        "</button>" +
+      "</div>" +
+      '<p class="cc-desc"></p>' +
+      '<div class="cc-author">' + avatarOf(p.profiles) + "<span>" + nameOf(p.profiles) +
+        ' &middot; ' + esc(whenLabel(p)) + "</span>" + viewsHtml(p.view_count) + "</div>" +
+      '<div class="cc-actions">' +
+        '<button type="button" class="cc-vote' + (voted ? " voted" : "") + '" data-act="vote" title="Upvote">' +
+          '<span class="cc-arrow"><svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path d="M8 4l5 6.5H3z" fill="currentColor"/></svg></span> <span class="cc-votes">' + p.vote_count + "</span></button>" +
+        '<button type="button" class="cc-btn" data-act="open">Open in Playground</button>' +
+        '<button type="button" class="cc-btn cc-comment-btn" data-act="detail"><svg class="cc-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M3 2h10a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H7l-3 3v-3a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="currentColor"/></svg> ' + commentCount + "</button>" +
+        (mine && isDraft ? '<button type="button" class="cc-btn cc-publish" data-act="publish">Publish</button>' : "") +
+        (mine ? '<button type="button" class="cc-btn cc-edit" data-act="edit">Edit</button>' : "") +
+        (isAdmin && featSupported && !isDraft
+          ? '<button type="button" class="cc-btn cc-feat' + (isFeatured ? " on" : "") + '" data-act="feature" title="' +
+            (isFeatured ? "Unpin this post" : "Pin this post to the top of Trending, New and Top") + '">' +
+            (isFeatured ? "★ Unfeature" : "☆ Feature") + "</button>"
+          : "") +
+        (isAdmin && !mine ? '<button type="button" class="cc-btn cc-mod" data-act="rename" title="Rename this post (admin)">Rename</button>' +
+                            '<button type="button" class="cc-btn cc-mod cc-mod-del" data-act="mod-del" title="Delete this post (admin)">Delete</button>' : "") +
+      "</div>";
+    card.querySelector(".cc-title").textContent = p.title;
+    const desc = card.querySelector(".cc-desc");
+    if (p.description) desc.innerHTML = linkify(p.description); else desc.remove();
+    card.querySelector('[data-act="vote"]').addEventListener("click", function () { toggleVote(p, card); });
+    card.querySelector('[data-act="play"]').addEventListener("click", function () {
+      // Games deserve the full page: leaderboard, comments, big stage. Turtle
+      // and plain-Python programs run inline in a quick popup.
+      if (p.kind === "game") { window.location.href = "../game/?id=" + encodeURIComponent(p.id); return; }
+      // 3D needs the Playground's WebGL stage: neither the popup player nor the
+      // game page has one, so they would just show an empty box.
+      if (p.kind === "game3d") { openInPlayground(p); return; }
+      countView(p, card);
+      if (window.PWL.player) window.PWL.player.openModal({ code: p.code, kind: p.kind, title: p.title });
     });
+    // The thumbnail is a link to the game page, which has no 3D stage either.
+    if (p.kind === "game3d") {
+      const thumbLink = card.querySelector(".cc-thumb-wrap");
+      if (thumbLink) thumbLink.addEventListener("click", function (e) { e.preventDefault(); openInPlayground(p); });
+    }
+    card.querySelector('[data-act="open"]').addEventListener("click", function () { openInPlayground(p); });
+    card.querySelector('[data-act="detail"]').addEventListener("click", function () { openDetail(p); });
+    if (mine) card.querySelector('[data-act="edit"]').addEventListener("click", function () { openEditor(p); });
+    const featBtn = card.querySelector('[data-act="feature"]');
+    if (featBtn) featBtn.addEventListener("click", function () { adminFeature(p, featBtn); });
+    if (isAdmin && !mine) {
+      card.querySelector('[data-act="rename"]').addEventListener("click", function () { adminRename(p, card); });
+      const delBtn = card.querySelector('[data-act="mod-del"]');
+      let armed = false, armTimer;
+      delBtn.addEventListener("click", function () {
+        if (!armed) {
+          armed = true; delBtn.textContent = "Click again to delete"; delBtn.classList.add("armed");
+          clearTimeout(armTimer);
+          armTimer = setTimeout(function () { armed = false; delBtn.textContent = "Delete"; delBtn.classList.remove("armed"); }, 3500);
+          return;
+        }
+        clearTimeout(armTimer);
+        adminDelete(p);
+      });
+    }
+    if (mine && isDraft) {
+      // Two-click, like delete: publishing is public and one-way, so a single
+      // stray click shouldn't do it.
+      const pubBtn = card.querySelector('[data-act="publish"]');
+      let armed = false, armTimer;
+      pubBtn.addEventListener("click", function () {
+        if (!armed) {
+          armed = true; pubBtn.textContent = "Click again to publish"; pubBtn.classList.add("armed");
+          clearTimeout(armTimer);
+          armTimer = setTimeout(function () { armed = false; pubBtn.textContent = "Publish"; pubBtn.classList.remove("armed"); }, 3500);
+          return;
+        }
+        clearTimeout(armTimer);
+        publishDraft(p);
+      });
+    }
+    if (window.PWL.preview) { try { window.PWL.preview.renderInto(card.querySelector(".cc-thumb"), p.code, p.scene); } catch (e) {} }
+    return card;
   }
 
   // Flip one of your drafts to public, straight from its card.
@@ -261,6 +381,44 @@
     if (res.error) { toast("Couldn't publish: " + res.error.message); return; }
     p.published = true;
     toast("Published! It's live in the community now.");
+    refresh();
+  }
+
+  // ---- Admin: pin a post to the top of every tab ----
+  // Deliberately does NOT touch updated_at: featuring a program is not the
+  // author editing it, and the card would otherwise start claiming it was.
+  // The database is the real gate (a trigger rejects a non-admin), this button
+  // is just the handle.
+  async function adminFeature(p, btn) {
+    const next = !p.featured;
+    if (btn) btn.disabled = true;
+    const res = await sb.from("projects").update({ featured: next })
+      .eq("id", p.id).select("id,featured").single();
+    if (btn) btn.disabled = false;
+    if (res.error) { toast("Couldn't " + (next ? "feature" : "unfeature") + ": " + res.error.message); return; }
+    p.featured = next;
+    toast(next ? "Featured. It now leads Trending, New and Top." : "No longer featured.");
+    refresh();
+  }
+
+  // ---- Admin moderation: rename / delete anyone's post ----
+  async function adminRename(p, card) {
+    const next = window.prompt("Rename this post:", p.title || "");
+    if (next == null) return;                     // cancelled
+    const title = next.trim().slice(0, 120);
+    if (!title || title === p.title) return;
+    const res = await sb.from("projects")
+      .update({ title: title, updated_at: new Date().toISOString() })
+      .eq("id", p.id).select("id").single();
+    if (res.error) { toast("Rename failed: " + res.error.message); return; }
+    p.title = title;
+    const el = card.querySelector(".cc-title"); if (el) el.textContent = title;
+    toast("Renamed.");
+  }
+  async function adminDelete(p) {
+    const res = await sb.from("projects").delete().eq("id", p.id);
+    if (res.error) { toast("Delete failed: " + res.error.message); return; }
+    toast("Post deleted.");
     refresh();
   }
 
@@ -329,7 +487,7 @@
       "</div>";
     back.querySelector(".pwl-modal-title").textContent = p.title;
     const md = back.querySelector(".pwl-modal-desc");
-    if (p.description) md.textContent = p.description; else md.remove();
+    if (p.description) md.innerHTML = linkify(p.description); else md.remove();
     back.querySelector(".pwl-modal-code").textContent = p.code;
 
     function close() { back.remove(); document.removeEventListener("keydown", onKey); }
@@ -367,7 +525,7 @@
           ' <span class="pwl-comment-when">' + esc(timeAgo(c.created_at)) + "</span></span>" +
           '<span class="pwl-comment-text"></span></div>' +
           (user && c.user_id === user.id ? '<button type="button" class="pwl-comment-del" title="Delete">&times;</button>' : "");
-        row.querySelector(".pwl-comment-text").textContent = c.body;
+        row.querySelector(".pwl-comment-text").innerHTML = linkify(c.body);
         const del = row.querySelector(".pwl-comment-del");
         if (del) del.addEventListener("click", async function () {
           await sb.from("comments").delete().eq("id", c.id);
